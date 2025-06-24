@@ -19,3 +19,7 @@ class Config:
             else:
                 return default
         return data
+
+
+# 实例化配置对象
+config = Config()
