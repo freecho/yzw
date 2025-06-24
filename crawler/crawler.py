@@ -43,7 +43,11 @@ class School:
                 data = await response.json()
                 if not data['flag']:
                     print(data['msg'])
-                    print("请延长抓取时间间隔，正在重试……")
+                    if data['msg'] == '请登录':
+                        await do_sleep()
+                        await self.session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
+                        await do_sleep()
+                    print("正在重试……")
                     await do_sleep()
                     await self.fetch_school_info(province_code, curPage, False, retry + 1)
                     return
@@ -88,7 +92,11 @@ class School:
                 data = await response.json()
                 if not data['flag']:
                     print(data['msg'])
-                    print("请延长抓取时间间隔，正在重试……")
+                    if data['msg'] == '请登录':
+                        await do_sleep()
+                        await self.session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
+                        await do_sleep()
+                    print("正在重试……")
                     await do_sleep()
                     await self.fetch_school_major(obj, curPage, False, retry + 1)
                     return
@@ -126,9 +134,15 @@ class School:
                                      data=detail_form_data) as detail_response:
             if detail_response.status == 200:
                 detail_data = await detail_response.json()
+
                 if not detail_data['flag']:
                     print(detail_data['msg'])
-                    print("请延长抓取时间间隔，正在重试……")
+                    if detail_data['msg'] == '请登录':
+                        await do_sleep()
+                        await self.session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
+                        await do_sleep()
+
+                    print("正在重试……")
                     await do_sleep()
                     await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
                     return

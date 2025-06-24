@@ -5,16 +5,7 @@ import aiohttp
 from crawler.login import Login
 from crawler.crawler import School
 
-
-async def work():
-    print("请输入下面信息！")
-    username = input("账号：")
-    password = input("密码：")
-
-    # 创建登录实例
-    login = Login(username, password)
-    session = await login.get_session()
-    ssList = [
+ssList = [
         {
             'code': '1',
             'name': '一区',
@@ -62,6 +53,9 @@ async def work():
         }
     ]
 
+async def work():
+    session = await Login().do_login()
+
     # 需要get访问同步登录状态
     await session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
 
@@ -72,7 +66,6 @@ async def work():
             print(f"正在爬取{child['name']}的学校信息...")
             await school.fetch_school_info(child['code'])
             print(f"{child['name']}的学校信息爬取完成！")
-
 
     await session.close()
 
