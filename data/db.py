@@ -69,3 +69,24 @@ def insert(item):
         print(f"插入失败：{e}")
     finally:
         session.close()
+
+def get_last_major():
+    """
+    获取 major 表最后一条记录的省份、学校、专业代码
+    """
+    session = Session()
+    try:
+        last_major = session.query(Major).order_by(Major.id.desc()).first()
+        if last_major:
+            return {
+                'province': last_major.province,
+                'school_name': last_major.school_name,
+                'major_code': last_major.major_code
+            }
+        else:
+            return None
+    except SQLAlchemyError as e:
+        print(f"查询最后一条 major 记录失败：{e}")
+        return None
+    finally:
+        session.close()

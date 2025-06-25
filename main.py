@@ -4,6 +4,7 @@ import aiohttp
 
 from crawler.login import Login
 from crawler.crawler import School
+from data import db  # 新增导入
 
 ssList = [
         {
@@ -59,13 +60,25 @@ async def work():
     # 需要get访问同步登录状态
     await session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
 
+    # 获取断点信息
+    last_major = db.get_last_major()
+    last_province = last_major['province'] if last_major else None
+    reached_province = False if last_province else True
+
     # 获取学校信息 todo
-    school = School(session)
+    school = School(session, breakpoint=last_major)
     for ss in ssList:
         for child in ss['children']:
-            print(f"正在爬取{child['name']}的学校信息...")
+            province_name = child['name']
+            # 断点判断：未到断点省份则跳过
+            if not reached_province:
+                if province_name == last_province:
+                    reached_province = True
+                else:
+                    continue
+            print(f"正在爬取{province_name}的学校信息...")
             await school.fetch_school_info(child['code'])
-            print(f"{child['name']}的学校信息爬取完成！")
+            print(f"{province_name}的学校信息爬取完成！")
 
     await session.close()
 

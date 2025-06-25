@@ -13,7 +13,7 @@ async def do_sleep():
 
 
 class School:
-    def __init__(self, session):
+    def __init__(self, session, breakpoint=None):
         self.session = session
         self.url = 'https://yz.chsi.com.cn/zsml/rs/dws.do'
         self.form_data = {
@@ -28,6 +28,9 @@ class School:
             'totalPage': '',
             'totalCount': ''
         }
+        self.breakpoint = breakpoint or {}
+        self.reached_school = False if self.breakpoint.get('school_name') else True
+        self.reached_major = False if self.breakpoint.get('major_code') else True
 
     # 爬取指定省份地区的学校信息
     async def fetch_school_info(self, province_code, curPage=1, go_on=True, retry=0):
@@ -55,6 +58,13 @@ class School:
                     # 学校列表
                     list = data['msg']['list']
                     for item in list:
+                        school_name = item.get('dwmc')
+                        # 断点跳过逻辑
+                        if not self.reached_school:
+                            if school_name == self.breakpoint.get('school_name'):
+                                self.reached_school = True
+                            else:
+                                continue
                         await self.fetch_school_major(item)
                     print(data)
 
@@ -104,6 +114,13 @@ class School:
                     # 专业列表
                     list = data['msg']['list']
                     for item in list:
+                        major_code = item.get('zydm')
+                        # 断点跳过逻辑
+                        if not self.reached_major:
+                            if major_code == self.breakpoint.get('major_code'):
+                                self.reached_major = True
+                            else:
+                                continue
                         await do_sleep()
                         detail_form_data = {
                             'zydm': item.get('zydm'),
