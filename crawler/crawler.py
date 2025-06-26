@@ -58,6 +58,10 @@ class School:
                     print(data['msg'])
                     if data['msg'] == '请登录':
                         await self.handle_login_prompt()
+                    elif data['msg'] == '访问太频繁':
+                        wait_time = retry * 2
+                        print(f"访问太频繁，等待{wait_time}秒后重试……")
+                        await asyncio.sleep(wait_time)
                     print("正在重试……")
                     await do_sleep()
                     await self.fetch_school_info(province_code, curPage, False, retry + 1)
@@ -112,6 +116,10 @@ class School:
                     print(data['msg'])
                     if data['msg'] == '请登录':
                         await self.handle_login_prompt()
+                    elif data['msg'] == '访问太频繁':
+                        wait_time = retry * 2
+                        print(f"访问太频繁，等待{wait_time}秒后重试……")
+                        await asyncio.sleep(wait_time)
                     print("正在重试……")
                     await do_sleep()
                     await self.fetch_school_major(obj, curPage, False, retry + 1)
@@ -162,7 +170,10 @@ class School:
                     print(detail_data['msg'])
                     if detail_data['msg'] == '请登录':
                         await self.handle_login_prompt()
-
+                    elif detail_data['msg'] == '访问太频繁':
+                        wait_time = retry * 2
+                        print(f"访问太频繁，等待{wait_time}秒后重试……")
+                        await asyncio.sleep(wait_time)
                     print("正在重试……")
                     await do_sleep()
                     await self._fetch_major_detail(item, detail_form_data, False, retry + 1)

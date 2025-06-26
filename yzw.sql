@@ -11,7 +11,7 @@
  Target Server Version : 80040 (8.0.40)
  File Encoding         : 65001
 
- Date: 25/06/2025 19:40:17
+ Date: 26/06/2025 18:00:22
 */
 
 SET NAMES utf8mb4;
@@ -41,8 +41,8 @@ CREATE TABLE `major`  (
   `exam_subject4` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL COMMENT '考试科目4',
   `id` int NOT NULL AUTO_INCREMENT COMMENT '主键',
   PRIMARY KEY (`id`) USING BTREE,
-  UNIQUE INDEX `unique`(`department` ASC, `research_direction` ASC, `major_code` ASC, `study_mode` ASC, `exam_type` ASC) USING BTREE COMMENT '确保唯一',
+  UNIQUE INDEX `unique`(`department` ASC, `research_direction` ASC, `major_code` ASC, `study_mode` ASC, `exam_type` ASC, `school_name` ASC) USING BTREE COMMENT '确保唯一',
   INDEX `major`(`major_name` ASC) USING BTREE COMMENT '专业名称索引'
-) ENGINE = InnoDB AUTO_INCREMENT = 3755 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 6190 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
 
 SET FOREIGN_KEY_CHECKS = 1;
