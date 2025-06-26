@@ -5,3 +5,4 @@ test.py
 *.pyc
 *.pyo
 *.pyd
+/failed_requests.log
