@@ -31,6 +31,16 @@ class School:
         self.breakpoint = breakpoint or {}
         self.reached_school = False if self.breakpoint.get('school_name') else True
         self.reached_major = False if self.breakpoint.get('major_code') else True
+        self.login_prompt_count = 0  # 统计"请登录"出现次数
+
+    async def handle_login_prompt(self):
+        self.login_prompt_count += 1
+        if self.login_prompt_count >= 10:
+            print("检测到'请登录'超过10次，程序自动终止！")
+            raise SystemExit
+        await do_sleep()
+        await self.session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
+        await do_sleep()
 
     # 爬取指定省份地区的学校信息
     async def fetch_school_info(self, province_code, curPage=1, go_on=True, retry=0):
@@ -47,9 +57,7 @@ class School:
                 if not data['flag']:
                     print(data['msg'])
                     if data['msg'] == '请登录':
-                        await do_sleep()
-                        await self.session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
-                        await do_sleep()
+                        await self.handle_login_prompt()
                     print("正在重试……")
                     await do_sleep()
                     await self.fetch_school_info(province_code, curPage, False, retry + 1)
@@ -103,9 +111,7 @@ class School:
                 if not data['flag']:
                     print(data['msg'])
                     if data['msg'] == '请登录':
-                        await do_sleep()
-                        await self.session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
-                        await do_sleep()
+                        await self.handle_login_prompt()
                     print("正在重试……")
                     await do_sleep()
                     await self.fetch_school_major(obj, curPage, False, retry + 1)
@@ -155,9 +161,7 @@ class School:
                 if not detail_data['flag']:
                     print(detail_data['msg'])
                     if detail_data['msg'] == '请登录':
-                        await do_sleep()
-                        await self.session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
-                        await do_sleep()
+                        await self.handle_login_prompt()
 
                     print("正在重试……")
                     await do_sleep()
