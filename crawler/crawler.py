@@ -3,13 +3,20 @@ import random
 from time import sleep
 from urllib.parse import urlencode
 import datetime
+import re
+import ast
 
 from config import config
 from data import db
 
 
-def log_failed_request(request_type, info):
+def log_failed_request(request_type, info, item=None):
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 如果有item，补全xwlxmc等字段
+    if item is not None:
+        # 只补全常用字段，避免None
+        xwlxmc = item.get('xwlxmc', '')
+        info += f", xwlxmc: {xwlxmc}"
     log_line = f"[{timestamp}] [{request_type}] {info}，错误原因: 重试次数过多\n"
     with open('failed_requests.log', 'a', encoding='utf-8') as f:
         f.write(log_line)
@@ -65,9 +72,6 @@ class School:
             if response.status == 200:
                 data = await response.json()
                 if not data.get('flag'):
-                    if 'flag' not in data:
-                        print("警告：返回数据没有flag字段，内容如下：", data)
-                        log_failed_request('fetch_school_info_no_flag', str(data))
                     msg = data.get('msg')
                     if msg == '请登录':
                         await self.handle_login_prompt()
@@ -124,7 +128,7 @@ class School:
         if retry > 5:
             print("重试次数过多，放弃当前学校专业抓取")
             info = f"学校: {obj.get('dwmc')}, 当前页: {curPage}, 断点: {self.breakpoint}"
-            log_failed_request('fetch_school_major', info)
+            log_failed_request('fetch_school_major', info, obj)
             return
         form_data = {
             'dwdm': obj.get('dwdm'),
@@ -147,9 +151,6 @@ class School:
             if response.status == 200:
                 data = await response.json()
                 if not data.get('flag'):
-                    if 'flag' not in data:
-                        print("警告：返回数据没有flag字段，内容如下：", data)
-                        log_failed_request('fetch_school_major_no_flag', str(data))
                     msg = data.get('msg')
                     if msg == '请登录':
                         await self.handle_login_prompt()
@@ -163,7 +164,7 @@ class School:
                         return
                     print(msg)
                     print("警告：msg字段不是dict或缺少list，内容如下：", data)
-                    log_failed_request('fetch_school_major_msg_type', str(data))
+                    log_failed_request('fetch_school_major_msg_type', str(data), obj)
                     return
                 else:
                     msg = data.get('msg')
@@ -204,7 +205,7 @@ class School:
                             await self._fetch_major_detail(item, detail_form_data)
                     else:
                         print("警告：msg字段不是dict或缺少list，内容如下：", data)
-                        log_failed_request('fetch_school_major_msg_type', str(data))
+                        log_failed_request('fetch_school_major_msg_type', str(data), obj)
                         return
 
                 if data.get('msg') and isinstance(data.get('msg'), dict) and data.get('msg').get('nextPageAvailable') and go_on:
@@ -218,7 +219,7 @@ class School:
         if retry > 5:
             print("重试次数过多，放弃当前专业详情抓取")
             info = f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}"
-            log_failed_request('fetch_major_detail', info)
+            log_failed_request('fetch_major_detail', info, item)
             return
         async with self.session.post('https://yz.chsi.com.cn/zsml/rs/yjfxs.do',
                                      data=detail_form_data) as detail_response:
@@ -226,9 +227,6 @@ class School:
                 detail_data = await detail_response.json()
 
                 if not detail_data.get('flag'):
-                    if 'flag' not in detail_data:
-                        print("警告：返回数据没有flag字段，内容如下：", detail_data)
-                        log_failed_request('fetch_major_detail_no_flag', str(detail_data))
                     msg = detail_data.get('msg')
                     if msg == '请登录':
                         await self.handle_login_prompt()
@@ -247,7 +245,7 @@ class School:
                             db.insert(detail_item)
                     else:
                         print("警告：msg字段不是dict或缺少list，内容如下：", detail_data)
-                        log_failed_request('fetch_major_detail_msg_type', str(detail_data))
+                        log_failed_request('fetch_major_detail_msg_type', str(detail_data), item)
                         return
                 else:
                     msg = detail_data.get('msg')
@@ -268,8 +266,115 @@ class School:
                             db.insert(detail_item)
                     else:
                         print("警告：msg字段不是dict或缺少list，内容如下：", detail_data)
-                        log_failed_request('fetch_major_detail_msg_type', str(detail_data))
+                        log_failed_request('fetch_major_detail_msg_type', str(detail_data), item)
                         return
             else:
                 print(f"详情请求失败，状态码: {detail_response.status}")
                 await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
+
+
+async def retry_failed_requests(school_instance, log_path='failed_requests.log'):
+    print('开始日志重试...')
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        print('日志文件未找到')
+        return
+    
+    print(f'日志文件共有 {len(lines)} 行内容')
+    
+    if not lines:
+        print('日志文件为空，无需重试')
+        return
+        
+    retried = set()
+    lines_to_keep = []
+    retry_count = 0
+    
+    for line in lines:
+        if "错误原因: 重试次数过多" not in line:
+            lines_to_keep.append(line)
+            continue
+        handled = False
+        await asyncio.sleep(1)
+        # fetch_school_major
+        if '[fetch_school_major_no_flag]' in line or '[fetch_school_major_msg_type]' in line:
+            m = re.search(r'\] \[fetch_school_major.*?\] (\{.*\})，错误原因', line)
+            if m:
+                try:
+                    info = ast.literal_eval(m.group(1))
+                except Exception:
+                    lines_to_keep.append(line)
+                    continue
+                dwdm = info.get('zsmlcxModel', {}).get('dwdm')
+                dwmc = info.get('zsmlcxModel', {}).get('dwmc')
+                curPage = int(info.get('params', {}).get('curPage', ['1'])[0])
+                key = (dwdm, dwmc, curPage)
+                if key in retried:
+                    continue
+                print(f'重试日志失败请求：学校={dwmc}, dwdm={dwdm}, 当前页={curPage}')
+                obj = {'dwdm': dwdm, 'dwmc': dwmc}
+                retry_school = type(school_instance)(school_instance.session, breakpoint={})
+                retry_school.login_prompt_count = 0  # 重置登录提示计数
+                try:
+                    await retry_school.fetch_school_major(obj, curPage)
+                    handled = True
+                    retry_count += 1
+                except Exception as e:
+                    print(f'重试失败：{e}')
+                    lines_to_keep.append(line)
+                    continue
+                retried.add(key)
+        # fetch_major_detail
+        elif '[fetch_major_detail_no_flag]' in line or '[fetch_major_detail_msg_type]' in line:
+            m = re.search(r'\] \[fetch_major_detail.*?\] (\{.*\})(?:, xwlxmc: (.*?))?，错误原因', line)
+            if m:
+                try:
+                    info = ast.literal_eval(m.group(1))
+                except Exception:
+                    lines_to_keep.append(line)
+                    continue
+                xwlxmc = m.group(2) if m.group(2) else ''
+                params = info.get('params', {})
+                item = {
+                    'zydm': params.get('zydm', [''])[0],
+                    'zymc': params.get('zymc', [''])[0],
+                    'dwdm': params.get('dwdm', [''])[0],
+                    'xwlxmc': xwlxmc,
+                }
+                detail_form_data = {
+                    'zydm': params.get('zydm', [''])[0],
+                    'zymc': params.get('zymc', [''])[0],
+                    'dwdm': params.get('dwdm', [''])[0],
+                    'xxfs': params.get('xxfs', [''])[0],
+                    'dwlxs': params.get('dwlxs', [''])[0] if 'dwlxs' in params else '',
+                    'tydxs': params.get('tydxs', [''])[0],
+                    'jsggjh': params.get('jsggjh', [''])[0],
+                    'start': params.get('start', ['0'])[0],
+                    'pageSize': params.get('pageSize', ['3'])[0],
+                    'totalCount': params.get('totalCount', ['0'])[0]
+                }
+                key = (item['dwdm'], item['zydm'], item['zymc'])
+                if key in retried:
+                    continue
+                print(f'重试日志失败请求：专业={item["zymc"]}, 学校代码={item["dwdm"]}, 专业代码={item["zydm"]}, 学位类型={item["xwlxmc"]}')
+                retry_school = type(school_instance)(school_instance.session, breakpoint={})
+                retry_school.login_prompt_count = 0  # 重置登录提示计数
+                try:
+                    await retry_school._fetch_major_detail(item, detail_form_data)
+                    handled = True
+                    retry_count += 1
+                except Exception as e:
+                    print(f'重试失败：{e}')
+                    lines_to_keep.append(line)
+                    continue
+                retried.add(key)
+        if not handled:
+            lines_to_keep.append(line)
+    
+    print(f'日志重试完成！共重试了 {retry_count} 个请求')
+    
+    # 写回未处理的日志
+    with open(log_path, 'w', encoding='utf-8') as f:
+        f.writelines(lines_to_keep)
