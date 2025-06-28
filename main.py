@@ -6,6 +6,8 @@ from crawler.login import Login
 from crawler.crawler import Crawler
 from data import db  # 新增导入
 from crawler.crawler import retry_failed_requests
+from proxy_manager import ProxyManager
+from config import config
 
 ssList = [
         {
@@ -60,6 +62,43 @@ async def work():
 
     # 需要get访问同步登录状态
     await session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
+
+    # 代理功能选择
+    print("\n请选择网络连接方式：")
+    print("1. 使用代理池（推荐，可有效避免IP被封）")
+    print("2. 使用自身IP（如果代理池不可用或不想使用代理）")
+    
+    while True:
+        try:
+            proxy_choice = input("请选择网络连接方式（输入1或2）：").strip()
+            if proxy_choice in ['1', '2']:
+                break
+            else:
+                print("请输入1或2")
+        except KeyboardInterrupt:
+            print("\n程序被用户中断")
+            return
+
+    # 初始化代理管理器
+    proxy_manager = None
+    
+    if proxy_choice == '1':
+        print("正在初始化代理管理器...")
+        # 检查是否启用代理功能
+        if config.get('proxy.enabled', False):
+            proxy_pool_url = config.get('proxy.pool_url', 'http://127.0.0.1:5010')
+            proxy_manager = ProxyManager(proxy_pool_url)
+            try:
+                # 尝试初始化代理（可选，如果代理池不可用会降级到自身IP）
+                await proxy_manager.initialize_proxy()
+                print("代理管理器初始化成功")
+            except Exception as e:
+                print(f"代理初始化失败，将使用自身IP: {e}")
+                proxy_manager = None
+        else:
+            print("代理功能未启用，将使用自身IP")
+    else:
+        print("已选择使用自身IP")
 
     # 断点选择
     print("\n请选择断点模式：（数据抓取的起始点）")
@@ -125,7 +164,7 @@ async def work():
             return
 
     # 获取爬虫实例
-    crawler = Crawler(session, breakpoint=last_major)
+    crawler = Crawler(session, breakpoint=last_major, proxy_manager=proxy_manager)
 
     # 1. 先用断点crawler补抓日志失败项
     print("开始执行日志重试...")

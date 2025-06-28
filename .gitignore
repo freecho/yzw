@@ -6,3 +6,4 @@ test.py
 *.pyo
 *.pyd
 /failed_requests.log
+/ip_failure.log

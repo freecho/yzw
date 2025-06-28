@@ -5,9 +5,13 @@ from urllib.parse import urlencode
 import datetime
 import re
 import ast
+import aiohttp
+import logging
+import sys
 
 from config import config
 from data import db
+from proxy_manager import ProxyManager
 
 
 def log_failed_request(request_type, info, item=None):
@@ -28,7 +32,7 @@ async def do_sleep():
 
 
 class Crawler:
-    def __init__(self, session, breakpoint=None):
+    def __init__(self, session, breakpoint=None, proxy_manager=None):
         self.session = session
         self.url = 'https://yz.chsi.com.cn/zsml/rs/dws.do'
         self.form_data = {
@@ -47,6 +51,7 @@ class Crawler:
         self.reached_school = False if self.breakpoint.get('school_name') else True
         self.reached_major = False if self.breakpoint.get('major_code') else True
         self.login_prompt_count = 0  # 统计"请登录"出现次数
+        self.proxy_manager = proxy_manager  # 代理管理器
 
     async def handle_login_prompt(self):
         self.login_prompt_count += 1
@@ -68,61 +73,115 @@ class Crawler:
         self.form_data['curPage'] = curPage
         self.form_data['start'] = str((curPage - 1) * 10)
 
-        async with self.session.post(self.url, data=self.form_data) as response:
-            if response.status == 200:
-                data = await response.json()
-                if not data.get('flag'):
-                    msg = data.get('msg')
-                    if msg == '请登录':
-                        await self.handle_login_prompt()
-                    elif msg == '访问太频繁':
-                        wait_time = retry * 2
-                        print(f"访问太频繁，等待{wait_time}秒后重试……")
-                        await asyncio.sleep(wait_time)
-                        print("正在重试……")
-                        await do_sleep()
-                        await self.fetch_school_info(province_code, curPage, False, retry + 1)
-                        return
-                    print(msg)
-                    print("警告：msg字段不是dict或缺少list，内容如下：", data)
-                    log_failed_request('fetch_school_info_msg_type', str(data))
-                    return
-                else:
-                    msg = data.get('msg')
-                    if msg == '请登录':
-                        await self.handle_login_prompt()
-                        return
-                    elif msg == '访问太频繁':
-                        wait_time = retry * 2
-                        print(f"访问太频繁，等待{wait_time}秒后重试……")
-                        await asyncio.sleep(wait_time)
-                        print("正在重试……")
-                        await do_sleep()
-                        await self.fetch_school_info(province_code, curPage, False, retry + 1)
-                        return
-                    if isinstance(msg, dict) and 'list' in msg:
-                        list_ = msg['list']
-                        for item in list_:
-                            school_name = item.get('dwmc')
-                            # 断点跳过逻辑
-                            if not self.reached_school:
-                                if school_name == self.breakpoint.get('school_name'):
-                                    self.reached_school = True
-                                else:
-                                    continue
-                            await self.fetch_school_major(item)
-                    else:
+        try:
+            async with self.session.post(self.url, data=self.form_data) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if not data.get('flag'):
+                        msg = data.get('msg')
+                        if msg == '请登录':
+                            await self.handle_login_prompt()
+                        elif msg == '访问太频繁':
+                            wait_time = retry * 2
+                            print(f"访问太频繁，等待{wait_time}秒后重试……")
+                            await asyncio.sleep(wait_time)
+                            print("正在重试……")
+                            await do_sleep()
+                            await self.fetch_school_info(province_code, curPage, False, retry + 1)
+                            return
+                        print(msg)
                         print("警告：msg字段不是dict或缺少list，内容如下：", data)
                         log_failed_request('fetch_school_info_msg_type', str(data))
                         return
+                    else:
+                        msg = data.get('msg')
+                        if msg == '请登录':
+                            await self.handle_login_prompt()
+                            return
+                        elif msg == '访问太频繁':
+                            wait_time = retry * 2
+                            print(f"访问太频繁，等待{wait_time}秒后重试……")
+                            await asyncio.sleep(wait_time)
+                            print("正在重试……")
+                            await do_sleep()
+                            await self.fetch_school_info(province_code, curPage, False, retry + 1)
+                            return
+                        if isinstance(msg, dict) and 'list' in msg:
+                            list_ = msg['list']
+                            for item in list_:
+                                school_name = item.get('dwmc')
+                                # 断点跳过逻辑
+                                if not self.reached_school:
+                                    if school_name == self.breakpoint.get('school_name'):
+                                        self.reached_school = True
+                                    else:
+                                        continue
+                                await self.fetch_school_major(item)
+                        else:
+                            print("警告：msg字段不是dict或缺少list，内容如下：", data)
+                            log_failed_request('fetch_school_info_msg_type', str(data))
+                            return
 
-                if data.get('msg') and isinstance(data.get('msg'), dict) and data.get('msg').get('nextPageAvailable') and go_on:
-                    await do_sleep()
-                    await self.fetch_school_info(province_code, curPage + 1)
+                    if data.get('msg') and isinstance(data.get('msg'), dict) and data.get('msg').get('nextPageAvailable') and go_on:
+                        await do_sleep()
+                        await self.fetch_school_info(province_code, curPage + 1)
+                else:
+                    print(f"请求失败，状态码: {response.status}")
+                    await self.fetch_school_info(province_code, curPage, False, retry + 1)
+                    return None
+        except aiohttp.ClientConnectorError as e:
+            print(f"网络连接错误：{e}")
+            if self.proxy_manager and self.proxy_manager.should_use_proxy():
+                print("尝试切换代理...")
+                new_proxy = await self.proxy_manager.switch_proxy()
+                if new_proxy:
+                    print(f"已切换到新代理: {new_proxy}")
+                    if retry < 3:
+                        print(f"等待5秒后重试...")
+                        await asyncio.sleep(5)
+                        await self.fetch_school_info(province_code, curPage, False, retry + 1)
+                    else:
+                        print("网络连接失败，跳过当前省份")
+                        log_failed_request('fetch_school_info_network_error', f"省份代码: {province_code}, 当前页: {curPage}")
+                else:
+                    # 所有代理都失败，使用自身IP
+                    print("所有代理都失败，尝试使用自身IP...")
+                    if retry < 2:  # 给自身IP一次重试机会
+                        await asyncio.sleep(3)
+                        await self.fetch_school_info(province_code, curPage, False, retry + 1)
+                    else:
+                        # 自身IP也失败，记录错误并结束程序
+                        error_info = f"省份代码: {province_code}, 当前页: {curPage}, 错误: {e}"
+                        self.proxy_manager.record_direct_ip_failure(error_info)
+                        print("自身IP也失败，程序退出")
+                        sys.exit(1)
             else:
-                print(f"请求失败，状态码: {response.status}")
+                # 没有代理或已经是自身IP
+                if retry < 2:
+                    print(f"等待5秒后重试...")
+                    await asyncio.sleep(5)
+                    await self.fetch_school_info(province_code, curPage, False, retry + 1)
+                else:
+                    # 自身IP失败，记录错误并结束程序
+                    error_info = f"省份代码: {province_code}, 当前页: {curPage}, 错误: {e}"
+                    if self.proxy_manager:
+                        self.proxy_manager.record_direct_ip_failure(error_info)
+                    else:
+                        # 如果没有代理管理器，直接记录到文件
+                        with open('ip_failure.log', 'a', encoding='utf-8') as f:
+                            timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            f.write(f"[{timestamp}] 自身IP失败: {error_info}\n")
+                    print("自身IP也失败，程序退出")
+                    sys.exit(1)
+        except Exception as e:
+            print(f"请求异常：{e}")
+            if retry < 3:
+                print(f"等待3秒后重试...")
+                await asyncio.sleep(3)
                 await self.fetch_school_info(province_code, curPage, False, retry + 1)
-                return None
+            else:
+                print("请求失败，跳过当前省份")
+                log_failed_request('fetch_school_info_exception', f"省份代码: {province_code}, 当前页: {curPage}, 错误: {e}")
 
     async def fetch_school_major(self, obj, curPage=1, go_on=True, retry=0):
         if retry > 5:
@@ -147,73 +206,127 @@ class Crawler:
             'totalPage': '0',
             'totalCount': '0'
         }
-        async with self.session.post('https://yz.chsi.com.cn/zsml/rs/dwzys.do', data=form_data) as response:
-            if response.status == 200:
-                data = await response.json()
-                if not data.get('flag'):
-                    msg = data.get('msg')
-                    if msg == '请登录':
-                        await self.handle_login_prompt()
-                    elif msg == '访问太频繁':
-                        wait_time = retry * 2
-                        print(f"访问太频繁，等待{wait_time}秒后重试……")
-                        await asyncio.sleep(wait_time)
-                        print("正在重试……")
-                        await do_sleep()
-                        await self.fetch_school_major(obj, curPage, False, retry + 1)
-                        return
-                    print(msg)
-                    print("警告：msg字段不是dict或缺少list，内容如下：", data)
-                    log_failed_request('fetch_school_major_msg_type', str(data), obj)
-                    return
-                else:
-                    msg = data.get('msg')
-                    if msg == '请登录':
-                        await self.handle_login_prompt()
-                        return
-                    elif msg == '访问太频繁':
-                        wait_time = retry * 2
-                        print(f"访问太频繁，等待{wait_time}秒后重试……")
-                        await asyncio.sleep(wait_time)
-                        print("正在重试……")
-                        await do_sleep()
-                        await self.fetch_school_major(obj, curPage, False, retry + 1)
-                        return
-                    if isinstance(msg, dict) and 'list' in msg:
-                        list_ = msg['list']
-                        for item in list_:
-                            major_code = item.get('zydm')
-                            # 断点跳过逻辑
-                            if not self.reached_major:
-                                if major_code == self.breakpoint.get('major_code'):
-                                    self.reached_major = True
-                                else:
-                                    continue
+        try:
+            async with self.session.post('https://yz.chsi.com.cn/zsml/rs/dwzys.do', data=form_data) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if not data.get('flag'):
+                        msg = data.get('msg')
+                        if msg == '请登录':
+                            await self.handle_login_prompt()
+                        elif msg == '访问太频繁':
+                            wait_time = retry * 2
+                            print(f"访问太频繁，等待{wait_time}秒后重试……")
+                            await asyncio.sleep(wait_time)
+                            print("正在重试……")
                             await do_sleep()
-                            detail_form_data = {
-                                'zydm': item.get('zydm'),
-                                'zymc': item.get('zymc'),
-                                'dwdm': item.get('dwdm'),
-                                'xxfs': '',
-                                'dwlxs': '',
-                                'tydxs': '',
-                                'jsggjh': '',
-                                'start': '0',
-                                'pageSize': '3',
-                                'totalCount': '0'
-                            }
-                            await self._fetch_major_detail(item, detail_form_data)
-                    else:
+                            await self.fetch_school_major(obj, curPage, False, retry + 1)
+                            return
+                        print(msg)
                         print("警告：msg字段不是dict或缺少list，内容如下：", data)
                         log_failed_request('fetch_school_major_msg_type', str(data), obj)
                         return
+                    else:
+                        msg = data.get('msg')
+                        if msg == '请登录':
+                            await self.handle_login_prompt()
+                            return
+                        elif msg == '访问太频繁':
+                            wait_time = retry * 2
+                            print(f"访问太频繁，等待{wait_time}秒后重试……")
+                            await asyncio.sleep(wait_time)
+                            print("正在重试……")
+                            await do_sleep()
+                            await self.fetch_school_major(obj, curPage, False, retry + 1)
+                            return
+                        if isinstance(msg, dict) and 'list' in msg:
+                            list_ = msg['list']
+                            for item in list_:
+                                major_code = item.get('zydm')
+                                # 断点跳过逻辑
+                                if not self.reached_major:
+                                    if major_code == self.breakpoint.get('major_code'):
+                                        self.reached_major = True
+                                    else:
+                                        continue
+                                await do_sleep()
+                                detail_form_data = {
+                                    'zydm': item.get('zydm'),
+                                    'zymc': item.get('zymc'),
+                                    'dwdm': item.get('dwdm'),
+                                    'xxfs': '',
+                                    'dwlxs': '',
+                                    'tydxs': '',
+                                    'jsggjh': '',
+                                    'start': '0',
+                                    'pageSize': '3',
+                                    'totalCount': '0'
+                                }
+                                await self._fetch_major_detail(item, detail_form_data)
+                        else:
+                            print("警告：msg字段不是dict或缺少list，内容如下：", data)
+                            log_failed_request('fetch_school_major_msg_type', str(data), obj)
+                            return
 
-                if data.get('msg') and isinstance(data.get('msg'), dict) and data.get('msg').get('nextPageAvailable') and go_on:
-                    await do_sleep()
-                    await self.fetch_school_major(obj, curPage + 1)
+                    if data.get('msg') and isinstance(data.get('msg'), dict) and data.get('msg').get('nextPageAvailable') and go_on:
+                        await do_sleep()
+                        await self.fetch_school_major(obj, curPage + 1)
+                else:
+                    print(f"请求失败，状态码: {response.status}")
+                    await self.fetch_school_major(obj, curPage, False, retry + 1)
+        except aiohttp.ClientConnectorError as e:
+            print(f"网络连接错误：{e}")
+            if self.proxy_manager and self.proxy_manager.should_use_proxy():
+                print("尝试切换代理...")
+                new_proxy = await self.proxy_manager.switch_proxy()
+                if new_proxy:
+                    print(f"已切换到新代理: {new_proxy}")
+                    if retry < 3:
+                        print(f"等待5秒后重试...")
+                        await asyncio.sleep(5)
+                        await self.fetch_school_major(obj, curPage, False, retry + 1)
+                    else:
+                        print("网络连接失败，跳过当前学校")
+                        log_failed_request('fetch_school_major_network_error', f"学校: {obj.get('dwmc')}, 当前页: {curPage}", obj)
+                else:
+                    # 所有代理都失败，使用自身IP
+                    print("所有代理都失败，尝试使用自身IP...")
+                    if retry < 2:  # 给自身IP一次重试机会
+                        await asyncio.sleep(3)
+                        await self.fetch_school_major(obj, curPage, False, retry + 1)
+                    else:
+                        # 自身IP也失败，记录错误并结束程序
+                        error_info = f"学校: {obj.get('dwmc')}, 当前页: {curPage}, 错误: {e}"
+                        self.proxy_manager.record_direct_ip_failure(error_info)
+                        print("自身IP也失败，程序退出")
+                        sys.exit(1)
             else:
-                print(f"请求失败，状态码: {response.status}")
+                # 没有代理或已经是自身IP
+                if retry < 2:
+                    print(f"等待5秒后重试...")
+                    await asyncio.sleep(5)
+                    await self.fetch_school_major(obj, curPage, False, retry + 1)
+                else:
+                    # 自身IP失败，记录错误并结束程序
+                    error_info = f"学校: {obj.get('dwmc')}, 当前页: {curPage}, 错误: {e}"
+                    if self.proxy_manager:
+                        self.proxy_manager.record_direct_ip_failure(error_info)
+                    else:
+                        # 如果没有代理管理器，直接记录到文件
+                        with open('ip_failure.log', 'a', encoding='utf-8') as f:
+                            timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            f.write(f"[{timestamp}] 自身IP失败: {error_info}\n")
+                    print("自身IP也失败，程序退出")
+                    sys.exit(1)
+        except Exception as e:
+            print(f"请求异常：{e}")
+            if retry < 3:
+                print(f"等待3秒后重试...")
+                await asyncio.sleep(3)
                 await self.fetch_school_major(obj, curPage, False, retry + 1)
+            else:
+                print("请求失败，跳过当前学校")
+                log_failed_request('fetch_school_major_exception', f"学校: {obj.get('dwmc')}, 当前页: {curPage}, 错误: {e}", obj)
 
     async def _fetch_major_detail(self, item, detail_form_data, go_on=True, retry=0):
         if retry > 5:
@@ -221,56 +334,110 @@ class Crawler:
             info = f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}"
             log_failed_request('fetch_major_detail', info, item)
             return
-        async with self.session.post('https://yz.chsi.com.cn/zsml/rs/yjfxs.do',
-                                     data=detail_form_data) as detail_response:
-            if detail_response.status == 200:
-                detail_data = await detail_response.json()
+        try:
+            async with self.session.post('https://yz.chsi.com.cn/zsml/rs/yjfxs.do',
+                                         data=detail_form_data) as detail_response:
+                if detail_response.status == 200:
+                    detail_data = await detail_response.json()
 
-                if not detail_data.get('flag'):
-                    msg = detail_data.get('msg')
-                    if msg == '请登录':
-                        await self.handle_login_prompt()
-                    elif msg == '访问太频繁':
-                        wait_time = retry * 2
-                        print(f"访问太频繁，等待{wait_time}秒后重试……")
-                        await asyncio.sleep(wait_time)
-                        print("正在重试……")
-                        await do_sleep()
-                        await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
-                        return
-                    if isinstance(msg, dict) and 'list' in msg:
-                        detail_list = msg['list']
-                        for detail_item in detail_list:
-                            detail_item['xwlxmc'] = item.get('xwlxmc')
-                            db.insert(detail_item)
+                    if not detail_data.get('flag'):
+                        msg = detail_data.get('msg')
+                        if msg == '请登录':
+                            await self.handle_login_prompt()
+                        elif msg == '访问太频繁':
+                            wait_time = retry * 2
+                            print(f"访问太频繁，等待{wait_time}秒后重试……")
+                            await asyncio.sleep(wait_time)
+                            print("正在重试……")
+                            await do_sleep()
+                            await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
+                            return
+                        if isinstance(msg, dict) and 'list' in msg:
+                            detail_list = msg['list']
+                            for detail_item in detail_list:
+                                detail_item['xwlxmc'] = item.get('xwlxmc')
+                                db.insert(detail_item)
+                        else:
+                            print("警告：msg字段不是dict或缺少list，内容如下：", detail_data)
+                            log_failed_request('fetch_major_detail_msg_type', str(detail_data), item)
+                            return
                     else:
-                        print("警告：msg字段不是dict或缺少list，内容如下：", detail_data)
-                        log_failed_request('fetch_major_detail_msg_type', str(detail_data), item)
-                        return
+                        msg = detail_data.get('msg')
+                        if msg == '请登录':
+                            await self.handle_login_prompt()
+                        elif msg == '访问太频繁':
+                            wait_time = retry * 2
+                            print(f"访问太频繁，等待{wait_time}秒后重试……")
+                            await asyncio.sleep(wait_time)
+                            print("正在重试……")
+                            await do_sleep()
+                            await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
+                            return
+                        if isinstance(msg, dict) and 'list' in msg:
+                            detail_list = msg['list']
+                            for detail_item in detail_list:
+                                detail_item['xwlxmc'] = item.get('xwlxmc')
+                                db.insert(detail_item)
+                        else:
+                            print("警告：msg字段不是dict或缺少list，内容如下：", detail_data)
+                            log_failed_request('fetch_major_detail_msg_type', str(detail_data), item)
+                            return
                 else:
-                    msg = detail_data.get('msg')
-                    if msg == '请登录':
-                        await self.handle_login_prompt()
-                    elif msg == '访问太频繁':
-                        wait_time = retry * 2
-                        print(f"访问太频繁，等待{wait_time}秒后重试……")
-                        await asyncio.sleep(wait_time)
-                        print("正在重试……")
-                        await do_sleep()
+                    print(f"详情请求失败，状态码: {detail_response.status}")
+                    await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
+        except aiohttp.ClientConnectorError as e:
+            print(f"网络连接错误：{e}")
+            if self.proxy_manager and self.proxy_manager.should_use_proxy():
+                print("尝试切换代理...")
+                new_proxy = await self.proxy_manager.switch_proxy()
+                if new_proxy:
+                    print(f"已切换到新代理: {new_proxy}")
+                    if retry < 3:
+                        print(f"等待5秒后重试...")
+                        await asyncio.sleep(5)
                         await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
-                        return
-                    if isinstance(msg, dict) and 'list' in msg:
-                        detail_list = msg['list']
-                        for detail_item in detail_list:
-                            detail_item['xwlxmc'] = item.get('xwlxmc')
-                            db.insert(detail_item)
                     else:
-                        print("警告：msg字段不是dict或缺少list，内容如下：", detail_data)
-                        log_failed_request('fetch_major_detail_msg_type', str(detail_data), item)
-                        return
+                        print("网络连接失败，跳过当前请求")
+                        log_failed_request('fetch_major_detail_network_error', f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}", item)
+                else:
+                    # 所有代理都失败，使用自身IP
+                    print("所有代理都失败，尝试使用自身IP...")
+                    if retry < 2:  # 给自身IP一次重试机会
+                        await asyncio.sleep(3)
+                        await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
+                    else:
+                        # 自身IP也失败，记录错误并结束程序
+                        error_info = f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}, 错误: {e}"
+                        self.proxy_manager.record_direct_ip_failure(error_info)
+                        print("自身IP也失败，程序退出")
+                        sys.exit(1)
             else:
-                print(f"详情请求失败，状态码: {detail_response.status}")
+                # 没有代理或已经是自身IP
+                if retry < 2:
+                    print(f"等待5秒后重试...")
+                    await asyncio.sleep(5)
+                    await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
+                else:
+                    # 自身IP失败，记录错误并结束程序
+                    error_info = f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}, 错误: {e}"
+                    if self.proxy_manager:
+                        self.proxy_manager.record_direct_ip_failure(error_info)
+                    else:
+                        # 如果没有代理管理器，直接记录到文件
+                        with open('ip_failure.log', 'a', encoding='utf-8') as f:
+                            timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            f.write(f"[{timestamp}] 自身IP失败: {error_info}\n")
+                    print("自身IP也失败，程序退出")
+                    sys.exit(1)
+        except Exception as e:
+            print(f"请求异常：{e}")
+            if retry < 3:
+                print(f"等待3秒后重试...")
+                await asyncio.sleep(3)
                 await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
+            else:
+                print("请求失败，跳过当前请求")
+                log_failed_request('fetch_major_detail_exception', f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}, 错误: {e}", item)
 
 
 async def retry_failed_requests(school_instance, log_path='failed_requests.log'):
@@ -315,7 +482,7 @@ async def retry_failed_requests(school_instance, log_path='failed_requests.log')
                     continue
                 print(f'重试日志失败请求：学校={dwmc}, dwdm={dwdm}, 当前页={curPage}')
                 obj = {'dwdm': dwdm, 'dwmc': dwmc}
-                retry_crawler = type(school_instance)(school_instance.session, breakpoint={})
+                retry_crawler = type(school_instance)(school_instance.session, breakpoint={}, proxy_manager=school_instance.proxy_manager)
                 retry_crawler.login_prompt_count = 0  # 重置登录提示计数
                 try:
                     await retry_crawler.fetch_school_major(obj, curPage)
@@ -359,7 +526,7 @@ async def retry_failed_requests(school_instance, log_path='failed_requests.log')
                 if key in retried:
                     continue
                 print(f'重试日志失败请求：专业={item["zymc"]}, 学校代码={item["dwdm"]}, 专业代码={item["zydm"]}, 学位类型={item["xwlxmc"]}')
-                retry_crawler = type(school_instance)(school_instance.session, breakpoint={})
+                retry_crawler = type(school_instance)(school_instance.session, breakpoint={}, proxy_manager=school_instance.proxy_manager)
                 retry_crawler.login_prompt_count = 0  # 重置登录提示计数
                 try:
                     await retry_crawler._fetch_major_detail(item, detail_form_data)
