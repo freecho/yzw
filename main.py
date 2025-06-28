@@ -3,7 +3,7 @@ import asyncio
 import aiohttp
 
 from crawler.login import Login
-from crawler.crawler import School
+from crawler.crawler import Crawler
 from data import db  # 新增导入
 from crawler.crawler import retry_failed_requests
 
@@ -92,7 +92,7 @@ async def work():
         # 模式2：手动输入断点参数
         print("\n请输入断点参数：")
         try:
-            province_name = input("省份名称（如：北京、上海等）：").strip()
+            province_name = input("省份名称（如：上海、内蒙等）：").strip()
             school_name = input("学校名称（可选，直接回车跳过）：").strip() or None
             major_code = input("专业代码（可选，直接回车跳过）：").strip() or None
             
@@ -124,12 +124,12 @@ async def work():
             print(f"输入断点参数时出错：{e}")
             return
 
-    # 获取学校信息
-    school = School(session, breakpoint=last_major)
+    # 获取爬虫实例
+    crawler = Crawler(session, breakpoint=last_major)
 
-    # 1. 先用断点school补抓日志失败项
+    # 1. 先用断点crawler补抓日志失败项
     print("开始执行日志重试...")
-    await retry_failed_requests(school)
+    await retry_failed_requests(crawler)
     print("日志重试执行完毕，开始正常爬取流程...")
 
     # 2. 再顺序爬取
@@ -147,7 +147,7 @@ async def work():
                     print(f"跳过省份：{province_name}（未到断点）")
                     continue
             print(f"正在爬取{province_name}的学校信息...")
-            await school.fetch_school_info(child['code'])
+            await crawler.fetch_school_info(child['code'])
             print(f"{province_name}的学校信息爬取完成！")
 
     print("所有省份爬取完成！")

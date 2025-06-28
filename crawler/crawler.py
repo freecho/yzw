@@ -27,7 +27,7 @@ async def do_sleep():
     await asyncio.sleep(interval * random.uniform(0.8, 1.2))  # 随机延时，防止被封禁
 
 
-class School:
+class Crawler:
     def __init__(self, session, breakpoint=None):
         self.session = session
         self.url = 'https://yz.chsi.com.cn/zsml/rs/dws.do'
@@ -315,10 +315,10 @@ async def retry_failed_requests(school_instance, log_path='failed_requests.log')
                     continue
                 print(f'重试日志失败请求：学校={dwmc}, dwdm={dwdm}, 当前页={curPage}')
                 obj = {'dwdm': dwdm, 'dwmc': dwmc}
-                retry_school = type(school_instance)(school_instance.session, breakpoint={})
-                retry_school.login_prompt_count = 0  # 重置登录提示计数
+                retry_crawler = type(school_instance)(school_instance.session, breakpoint={})
+                retry_crawler.login_prompt_count = 0  # 重置登录提示计数
                 try:
-                    await retry_school.fetch_school_major(obj, curPage)
+                    await retry_crawler.fetch_school_major(obj, curPage)
                     handled = True
                     retry_count += 1
                 except Exception as e:
@@ -359,10 +359,10 @@ async def retry_failed_requests(school_instance, log_path='failed_requests.log')
                 if key in retried:
                     continue
                 print(f'重试日志失败请求：专业={item["zymc"]}, 学校代码={item["dwdm"]}, 专业代码={item["zydm"]}, 学位类型={item["xwlxmc"]}')
-                retry_school = type(school_instance)(school_instance.session, breakpoint={})
-                retry_school.login_prompt_count = 0  # 重置登录提示计数
+                retry_crawler = type(school_instance)(school_instance.session, breakpoint={})
+                retry_crawler.login_prompt_count = 0  # 重置登录提示计数
                 try:
-                    await retry_school._fetch_major_detail(item, detail_form_data)
+                    await retry_crawler._fetch_major_detail(item, detail_form_data)
                     handled = True
                     retry_count += 1
                 except Exception as e:
