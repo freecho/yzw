@@ -26,18 +26,13 @@ def insert(item):
     插入 Major 实体数据
     """
     session = Session()
-    try:
-        # 提取考试科目名称（最多4科）
-        kskmz = item.get("kskmz")
+    kskmz = item.get("kskmz")
+    for km in kskmz:
         exam_subjects = ["", "", "", ""]
-        if kskmz and isinstance(kskmz, list):
-            km = kskmz[0]
-            exam_subjects[0] = km.get("km1Vo", {}).get("kskmmc", "")
-            exam_subjects[1] = km.get("km2Vo", {}).get("kskmmc", "")
-            exam_subjects[2] = km.get("km3Vo", {}).get("kskmmc", "")
-            exam_subjects[3] = km.get("km4Vo", {}).get("kskmmc", "")
-
-        # 构造 Major 实例
+        exam_subjects[0] = km.get("km1Vo", {}).get("kskmmc", "")
+        exam_subjects[1] = km.get("km2Vo", {}).get("kskmmc", "")
+        exam_subjects[2] = km.get("km3Vo", {}).get("kskmmc", "")
+        exam_subjects[3] = km.get("km4Vo", {}).get("kskmmc", "")
         major = Major(
             school_name=item.get("dwmc"),
             major_name=item.get("zymc"),
@@ -57,18 +52,17 @@ def insert(item):
             exam_subject3=exam_subjects[2],
             exam_subject4=exam_subjects[3],
         )
-
-        session.add(major)
-        session.commit()
-        print(f"成功插入：{item.get('zymc')}-{item.get("yjfxmc")}")
-    except IntegrityError:
-        session.rollback()
-        print("记录已存在，插入被忽略")
-    except SQLAlchemyError as e:
-        session.rollback()
-        print(f"插入失败：{e}")
-    finally:
-        session.close()
+        try:
+            session.add(major)
+            session.commit()
+            print(f"成功插入：{item.get('zymc')}-{item.get('yjfxmc')} 科目组合: {exam_subjects}")
+        except IntegrityError:
+            session.rollback()
+            print(f"记录已存在，插入被忽略：{item.get('zymc')}-{item.get('yjfxmc')} 科目组合: {exam_subjects}")
+        except SQLAlchemyError as e:
+            session.rollback()
+            print(f"插入失败：{e}")
+    session.close()
 
 def get_last_major():
     """
