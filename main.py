@@ -64,7 +64,7 @@ async def work():
     await session.get('https://yz.chsi.com.cn/zsml/a/dw.do')
 
     # 代理功能选择
-    print("\n请选择网络连接方式：")
+    print("\n请选择网络连接方式：(如果你不知道什么是代理池就输入2)")
     print("1. 使用代理池（推荐，可有效避免IP被封）")
     print("2. 使用自身IP（如果代理池不可用或不想使用代理）")
     
