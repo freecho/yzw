@@ -66,7 +66,7 @@ class Crawler:
         await do_sleep()
 
     # 爬取指定省份地区的学校信息
-    async def fetch_school_info(self, province_code, curPage=1, go_on=True, retry=0):
+    async def fetch_school_info(self, province_code, curPage=1, go_on=True, retry=0, target_school_code=None):
         if retry > 5:
             print("重试次数过多，放弃当前省份学校抓取")
             info = f"省份代码: {province_code}, 当前页: {curPage}, 断点: {self.breakpoint}"
@@ -113,19 +113,26 @@ class Crawler:
                             list_ = msg['list']
                             for item in list_:
                                 school_name = item.get('dwmc')
-                                # 断点跳过逻辑
-                                if not self.reached_school:
-                                    if school_name == self.breakpoint.get('school_name'):
-                                        self.reached_school = True
-                                    else:
-                                        continue
+                                school_code = item.get('dwdm')
+                                # 日志重试/单校重试时，优先过滤
+                                if target_school_code and str(school_code) != str(target_school_code):
+                                    continue
+                                # 正常断点续爬时，使用断点跳过逻辑
+                                if not target_school_code:
+                                    if not self.reached_school:
+                                        if school_name == self.breakpoint.get('school_name'):
+                                            pass  # 只在断点学校用专业断点
+                                        else:
+                                            continue
+                                item['ssdm'] = province_code  # 补充省份代码
                                 await self.fetch_school_major(item)
                         else:
                             print("警告：msg字段不是dict或缺少list，内容如下：", data)
                             log_failed_request('fetch_school_info_msg_type', str(data), province_code=province_code)
                             return
 
-                    if data.get('msg') and isinstance(data.get('msg'), dict) and data.get('msg').get('nextPageAvailable') and go_on:
+                    # 只在不指定目标学校时才递归分页
+                    if not target_school_code and data.get('msg') and isinstance(data.get('msg'), dict) and data.get('msg').get('nextPageAvailable') and go_on:
                         await do_sleep()
                         await self.fetch_school_info(province_code, curPage + 1)
                 else:
@@ -190,7 +197,7 @@ class Crawler:
         if retry > 5:
             print("重试次数过多，放弃当前学校专业抓取")
             info = f"学校: {obj.get('dwmc')}, 当前页: {curPage}, 断点: {self.breakpoint}"
-            log_failed_request('fetch_school_major', info, obj)
+            log_failed_request('fetch_school_major', info, obj, province_code=obj.get('ssdm'))
             return
         form_data = {
             'dwdm': obj.get('dwdm'),
@@ -227,7 +234,7 @@ class Crawler:
                             return
                         print(msg)
                         print("警告：msg字段不是dict或缺少list，内容如下：", data)
-                        log_failed_request('fetch_school_major_msg_type', str(data), obj)
+                        log_failed_request('fetch_school_major_msg_type', str(data), obj, province_code=obj.get('ssdm'))
                         return
                     else:
                         msg = data.get('msg')
@@ -265,10 +272,11 @@ class Crawler:
                                     'pageSize': '3',
                                     'totalCount': '0'
                                 }
+
                                 await self._fetch_major_detail(item, detail_form_data)
                         else:
                             print("警告：msg字段不是dict或缺少list，内容如下：", data)
-                            log_failed_request('fetch_school_major_msg_type', str(data), obj)
+                            log_failed_request('fetch_school_major_msg_type', str(data), obj, province_code=obj.get('ssdm'))
                             return
 
                     if data.get('msg') and isinstance(data.get('msg'), dict) and data.get('msg').get('nextPageAvailable') and go_on:
@@ -290,7 +298,7 @@ class Crawler:
                         await self.fetch_school_major(obj, curPage, False, retry + 1)
                     else:
                         print("网络连接失败，跳过当前学校")
-                        log_failed_request('fetch_school_major_network_error', f"学校: {obj.get('dwmc')}, 当前页: {curPage}", obj)
+                        log_failed_request('fetch_school_major_network_error', f"学校: {obj.get('dwmc')}, 当前页: {curPage}", obj, province_code=obj.get('ssdm'))
                 else:
                     # 所有代理都失败，使用自身IP
                     print("所有代理都失败，尝试使用自身IP...")
@@ -329,13 +337,13 @@ class Crawler:
                 await self.fetch_school_major(obj, curPage, False, retry + 1)
             else:
                 print("请求失败，跳过当前学校")
-                log_failed_request('fetch_school_major_exception', f"学校: {obj.get('dwmc')}, 当前页: {curPage}, 错误: {e}", obj)
+                log_failed_request('fetch_school_major_exception', f"学校: {obj.get('dwmc')}, 当前页: {curPage}, 错误: {e}", obj, province_code=obj.get('ssdm'))
 
     async def _fetch_major_detail(self, item, detail_form_data, go_on=True, retry=0):
         if retry > 5:
             print("重试次数过多，放弃当前专业详情抓取")
             info = f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}"
-            log_failed_request('fetch_major_detail', info, item)
+            log_failed_request('fetch_major_detail', info, item, province_code=item.get('ssdm'))
             return
         try:
             async with self.session.post('https://yz.chsi.com.cn/zsml/rs/yjfxs.do',
@@ -362,7 +370,7 @@ class Crawler:
                                 db.insert(detail_item)
                         else:
                             print("警告：msg字段不是dict或缺少list，内容如下：", detail_data)
-                            log_failed_request('fetch_major_detail_msg_type', str(detail_data), item)
+                            log_failed_request('fetch_major_detail_msg_type', str(detail_data), item, province_code=item.get('ssdm'))
                             return
                     else:
                         msg = detail_data.get('msg')
@@ -383,7 +391,7 @@ class Crawler:
                                 db.insert(detail_item)
                         else:
                             print("警告：msg字段不是dict或缺少list，内容如下：", detail_data)
-                            log_failed_request('fetch_major_detail_msg_type', str(detail_data), item)
+                            log_failed_request('fetch_major_detail_msg_type', str(detail_data), item, province_code=item.get('ssdm'))
                             return
                 else:
                     print(f"详情请求失败，状态码: {detail_response.status}")
@@ -401,7 +409,7 @@ class Crawler:
                         await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
                     else:
                         print("网络连接失败，跳过当前请求")
-                        log_failed_request('fetch_major_detail_network_error', f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}", item)
+                        log_failed_request('fetch_major_detail_network_error', f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}", item, province_code=item.get('ssdm'))
                 else:
                     # 所有代理都失败，使用自身IP
                     print("所有代理都失败，尝试使用自身IP...")
@@ -440,7 +448,7 @@ class Crawler:
                 await self._fetch_major_detail(item, detail_form_data, False, retry + 1)
             else:
                 print("请求失败，跳过当前请求")
-                log_failed_request('fetch_major_detail_exception', f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}, 错误: {e}", item)
+                log_failed_request('fetch_major_detail_exception', f"专业: {item.get('zymc')}, 学校: {item.get('dwmc')}, 错误: {e}", item, province_code=item.get('ssdm'))
 
 
 async def retry_failed_requests(school_instance, log_path='failed_requests.log'):
@@ -514,7 +522,9 @@ async def retry_failed_requests(school_instance, log_path='failed_requests.log')
                     continue
                 # print(f'重试日志失败请求（school级别）：学校={dwmc}, dwdm={dwdm}, 当前页={curPage}, 省份代码={province_code}')
                 try:
-                    await school_instance.fetch_school_info(province_code, curPage)
+                    retry_crawler = type(school_instance)(school_instance.session, breakpoint={}, proxy_manager=school_instance.proxy_manager)
+                    retry_crawler.login_prompt_count = 0  # 重置登录提示计数
+                    await retry_crawler.fetch_school_info(province_code, curPage, target_school_code=dwdm)
                     handled = True
                     retry_count += 1
                 except Exception as e:
