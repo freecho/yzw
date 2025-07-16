@@ -15,6 +15,9 @@
 ![截图1](img/screenshot1.png)
 ![截图2](img/screenshot2.png)
 
+## 数据获取
+本项目爬取的完整数据已经发布，前往 [release页面](https://github.com/freecho/yzw/releases) 下载即可。
+
 ## 使用方法
 使用本项目需要具备：下载项目、下载python依赖、创建数据库等非常基础的技能，在Ai协助下0基础大概率也能完成
 
